@@ -1,8 +1,42 @@
 import 'package:flutter/material.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
 import 'package:http/http.dart' as http;
+import 'package:crypto/crypto.dart' as crypto;
+import 'package:encrypt/encrypt.dart' as encrypt;
+import 'dart:typed_data';
 import 'dart:convert';
 import 'dart:async';
+
+// Shared secret key for AES encryption (must match the backend ENCRYPTION_KEY)
+const String encryptionKey = 'fleet_payload_secret_2026';
+
+// Helper to encrypt JSON payloads in OpenSSL/CryptoJS-compatible AES format
+String _encryptPayload(String plainText, String passphrase) {
+  final salt = encrypt.IV.fromSecureRandom(8).bytes;
+  final passBytes = utf8.encode(passphrase);
+
+  // OpenSSL EVP_BytesToKey derivation (matches CryptoJS.AES.encrypt)
+  final d1 = crypto.md5.convert([...passBytes, ...salt]).bytes;
+  final d2 = crypto.md5.convert([...d1, ...passBytes, ...salt]).bytes;
+  final d3 = crypto.md5.convert([...d2, ...passBytes, ...salt]).bytes;
+
+  final key = encrypt.Key(Uint8List.fromList([...d1, ...d2]));
+  final iv = encrypt.IV(Uint8List.fromList(d3));
+
+  final encrypter = encrypt.Encrypter(
+    encrypt.AES(key, mode: encrypt.AESMode.cbc, padding: 'PKCS7'),
+  );
+  final encrypted = encrypter.encrypt(plainText, iv: iv);
+
+  final saltedPrefix = utf8.encode('Salted__');
+  final combined = Uint8List.fromList([
+    ...saltedPrefix,
+    ...salt,
+    ...encrypted.bytes,
+  ]);
+
+  return base64.encode(combined);
+}
 
 void main() {
   runApp(const VehicleChatApp());
@@ -26,7 +60,7 @@ class VehicleChatApp extends StatelessWidget {
 }
 
 // ---------------------------------------------------------
-// Login Screen Interface
+// Login & Driver Registration Screen Interface
 // ---------------------------------------------------------
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -36,46 +70,161 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
+  final TextEditingController _nameController = TextEditingController();
   final TextEditingController _phoneController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
-  bool _isLoading = false;
-  String _errorMessage = '';
 
-  Future<void> _login() async {
+  bool _isRegisterMode = false;
+  bool _isLoading = false;
+  bool _isLoadingManagers = false;
+  String _errorMessage = '';
+  String _successMessage = '';
+
+  List<dynamic> _managers = [];
+  String? _selectedManagerId;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchManagers();
+  }
+
+  // Fetch registered managers so the driver can pick exactly one manager
+  Future<void> _fetchManagers() async {
     setState(() {
-      _isLoading = true;
-      _errorMessage = '';
+      _isLoadingManagers = true;
     });
 
     try {
-      final response = await http.post(
-        Uri.parse('http://10.0.2.2:5001/api/auth/login'),
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({
-          'phone': _phoneController.text.trim(),
-          'password': _passwordController.text.trim(),
-        }),
+      final response = await http.get(
+        Uri.parse('http://10.0.2.2:5001/api/rooms/managers'),
       );
 
-      final data = json.decode(response.body);
-
       if (response.statusCode == 200) {
-        if (!mounted) return;
-
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (context) => DriverChatScreen(
-              driverId: data['user']['_id'],
-              driverName: data['user']['name'],
-              token: data['token'],
-            ),
-          ),
-        );
-      } else {
+        final List<dynamic> data = json.decode(response.body);
+        if (mounted) {
+          setState(() {
+            _managers = data;
+            if (_managers.isNotEmpty &&
+                !_managers.any((m) => m['_id'] == _selectedManagerId)) {
+              _selectedManagerId = _managers.first['_id'] as String;
+            }
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('Failed to load managers: $e');
+    } finally {
+      if (mounted) {
         setState(() {
-          _errorMessage = data['error'] ?? 'Login failed';
+          _isLoadingManagers = false;
         });
+      }
+    }
+  }
+
+  Future<void> _submitAuth() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = '';
+      _successMessage = '';
+    });
+
+    try {
+      if (_isRegisterMode) {
+        final name = _nameController.text.trim();
+        final phone = _phoneController.text.trim();
+        final password = _passwordController.text.trim();
+
+        if (name.isEmpty || phone.isEmpty || password.isEmpty) {
+          setState(() {
+            _errorMessage = 'Please fill in all fields.';
+            _isLoading = false;
+          });
+          return;
+        }
+
+        if (_selectedManagerId == null || _selectedManagerId!.isEmpty) {
+          setState(() {
+            _errorMessage = 'Please select your assigned manager.';
+            _isLoading = false;
+          });
+          return;
+        }
+
+        // 1. Encrypt Driver registration payload
+        final rawPayload = json.encode({
+          'name': name,
+          'phone': phone,
+          'password': password,
+          'role': 'driver',
+          'managerId': _selectedManagerId,
+        });
+        final encryptedPayload = _encryptPayload(rawPayload, encryptionKey);
+
+        // 2. Call register endpoint
+        final response = await http.post(
+          Uri.parse('http://10.0.2.2:5001/api/auth/register'),
+          headers: {'Content-Type': 'application/json'},
+          body: json.encode({'data': encryptedPayload}),
+        );
+
+        final data = json.decode(response.body);
+
+        if (response.statusCode == 201) {
+          if (!mounted) return;
+          setState(() {
+            _successMessage = 'Driver registered! Please log in.';
+            _passwordController.clear();
+            _isRegisterMode = false; // Keep phone pre-filled for easy login
+          });
+        } else {
+          setState(() {
+            _errorMessage = data['error'] ?? 'Registration failed';
+          });
+        }
+      } else {
+        // 1. Build and encrypt login payload
+        final rawPayload = json.encode({
+          'phone': _phoneController.text.trim(),
+          'password': _passwordController.text.trim(),
+        });
+        final encryptedPayload = _encryptPayload(rawPayload, encryptionKey);
+
+        // 2. Call login endpoint
+        final response = await http.post(
+          Uri.parse('http://10.0.2.2:5001/api/auth/login'),
+          headers: {'Content-Type': 'application/json'},
+          body: json.encode({'data': encryptedPayload}),
+        );
+
+        final data = json.decode(response.body);
+
+        if (response.statusCode == 200) {
+          if (data['user']['role'] != 'driver') {
+            setState(() {
+              _errorMessage = 'Access denied: This app is for Drivers only.';
+            });
+            return;
+          }
+
+          if (!mounted) return;
+
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (context) => DriverChatScreen(
+                driverId: data['user']['_id'],
+                driverName: data['user']['name'],
+                token: data['token'],
+              ),
+            ),
+          );
+        } else {
+          setState(() {
+            _errorMessage = data['error'] ?? 'Login failed';
+          });
+        }
       }
     } catch (e) {
       setState(() {
@@ -92,6 +241,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   void dispose() {
+    _nameController.dispose();
     _phoneController.dispose();
     _passwordController.dispose();
     super.dispose();
@@ -122,16 +272,61 @@ class _LoginScreenState extends State<LoginScreen> {
               children: [
                 const Icon(Icons.directions_car, size: 64, color: Color(0xFF2C3E50)),
                 const SizedBox(height: 16),
-                const Text(
-                  'Driver Login',
-                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF2C3E50)),
-                ),
-                const SizedBox(height: 24),
-                if (_errorMessage.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 16),
-                    child: Text(_errorMessage, style: const TextStyle(color: Colors.red)),
+                Text(
+                  _isRegisterMode ? 'Driver Registration' : 'Driver Login',
+                  style: const TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF2C3E50),
                   ),
+                ),
+                const SizedBox(height: 20),
+
+                if (_errorMessage.isNotEmpty)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(10),
+                    margin: const EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                      color: Colors.red.shade50,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      _errorMessage,
+                      style: const TextStyle(color: Colors.red, fontSize: 13),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+
+                if (_successMessage.isNotEmpty)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(10),
+                    margin: const EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                      color: Colors.green.shade50,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      _successMessage,
+                      style: const TextStyle(color: Colors.green, fontSize: 13),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+
+                if (_isRegisterMode) ...[
+                  TextField(
+                    controller: _nameController,
+                    textCapitalization: TextCapitalization.words,
+                    decoration: const InputDecoration(
+                      labelText: 'Full Name',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.person),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                ],
+
                 TextField(
                   controller: _phoneController,
                   keyboardType: TextInputType.phone,
@@ -142,6 +337,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                 ),
                 const SizedBox(height: 16),
+
                 TextField(
                   controller: _passwordController,
                   obscureText: true,
@@ -151,19 +347,105 @@ class _LoginScreenState extends State<LoginScreen> {
                     prefixIcon: Icon(Icons.lock),
                   ),
                 ),
+
+                if (_isRegisterMode) ...[
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: DropdownButtonFormField<String>(
+                          key: ValueKey(_selectedManagerId),
+                          initialValue: _selectedManagerId,
+                          isExpanded: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Select Your Manager',
+                            border: OutlineInputBorder(),
+                            prefixIcon: Icon(Icons.supervisor_account),
+                          ),
+                          items: _managers.map((manager) {
+                            return DropdownMenuItem<String>(
+                              value: manager['_id'] as String,
+                              child: Text(
+                                '${manager['name']} (${manager['phone']})',
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            );
+                          }).toList(),
+                          onChanged: (value) {
+                            setState(() {
+                              _selectedManagerId = value;
+                            });
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      IconButton(
+                        tooltip: 'Refresh Managers',
+                        onPressed: _isLoadingManagers ? null : _fetchManagers,
+                        icon: _isLoadingManagers
+                            ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                            : const Icon(Icons.refresh),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade100,
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: Colors.grey.shade300),
+                    ),
+                    child: const Text(
+                      'Role: Driver',
+                      style: TextStyle(color: Colors.black54, fontWeight: FontWeight.w500),
+                    ),
+                  ),
+                ],
+
                 const SizedBox(height: 24),
                 SizedBox(
                   width: double.infinity,
                   height: 48,
                   child: ElevatedButton(
-                    onPressed: _isLoading ? null : _login,
+                    onPressed: _isLoading ? null : _submitAuth,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.blue,
                       foregroundColor: Colors.white,
                     ),
                     child: _isLoading
-                        ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                        : const Text('Login', style: TextStyle(fontSize: 16)),
+                        ? const SizedBox(
+                      height: 20,
+                      width: 20,
+                      child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                    )
+                        : Text(
+                      _isRegisterMode ? 'Register as Driver' : 'Login',
+                      style: const TextStyle(fontSize: 16),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextButton(
+                  onPressed: () {
+                    setState(() {
+                      _isRegisterMode = !_isRegisterMode;
+                      _errorMessage = '';
+                      _successMessage = '';
+                    });
+                    if (_isRegisterMode) {
+                      _fetchManagers();
+                    }
+                  },
+                  child: Text(
+                    _isRegisterMode
+                        ? 'Already registered? Login here'
+                        : 'New Driver? Register here',
                   ),
                 ),
               ],
@@ -198,13 +480,16 @@ class _DriverChatScreenState extends State<DriverChatScreen> {
   late io.Socket socket;
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
-  final List _messages = [];
+  final List<dynamic> _messages = [];
 
-  static const String communityRoomId = '651f8a700000000000000001';
-  static const String personalRoomId = '651f8a700000000000000002';
+  // Dynamic room IDs fetched from /api/rooms/my-rooms
+  String? _communityRoomId;
+  String? _personalRoomId;
+  String _managerName = 'Manager';
+  bool _isLoadingRooms = true;
 
   int _selectedIndex = 0;
-  late String _activeRoomId;
+  String? _activeRoomId;
 
   bool _isManagerTyping = false;
   Timer? _typingTimer;
@@ -212,9 +497,8 @@ class _DriverChatScreenState extends State<DriverChatScreen> {
   @override
   void initState() {
     super.initState();
-    _activeRoomId = communityRoomId;
-    _fetchHistory();
     _connectToSocket();
+    _fetchMyRooms();
   }
 
   void _scrollToBottom() {
@@ -229,25 +513,72 @@ class _DriverChatScreenState extends State<DriverChatScreen> {
     });
   }
 
+  // Fetch Community Hub room and the driver's dedicated private room with their assigned manager
+  Future<void> _fetchMyRooms() async {
+    try {
+      final response = await http.get(
+        Uri.parse('http://10.0.2.2:5001/api/rooms/my-rooms'),
+        headers: {'Authorization': 'Bearer ${widget.token}'},
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (mounted) {
+          setState(() {
+            _communityRoomId = data['communityRoomId'];
+            if (data['manager'] != null) {
+              _personalRoomId = data['manager']['roomId'];
+              _managerName = data['manager']['managerName'] ?? 'Manager';
+            }
+            _activeRoomId = _selectedIndex == 0 ? _communityRoomId : _personalRoomId;
+            _isLoadingRooms = false;
+          });
+
+          if (_activeRoomId != null) {
+            _fetchHistory();
+            if (socket.connected) {
+              socket.emit('join_room', {
+                'roomId': _activeRoomId,
+                'userId': widget.driverId,
+              });
+            }
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Failed to fetch driver rooms: $e');
+      if (mounted) {
+        setState(() {
+          _isLoadingRooms = false;
+        });
+      }
+    }
+  }
+
   void _onTabTapped(int index) {
     if (_selectedIndex == index) return;
 
+    final nextRoomId = index == 0 ? _communityRoomId : _personalRoomId;
+
     setState(() {
       _selectedIndex = index;
-      _activeRoomId = index == 0 ? communityRoomId : personalRoomId;
+      _activeRoomId = nextRoomId;
       _messages.clear();
       _isManagerTyping = false;
     });
 
-    _fetchHistory();
-
-    socket.emit('join_room', {
-      'roomId': _activeRoomId,
-      'userId': widget.driverId,
-    });
+    if (_activeRoomId != null) {
+      _fetchHistory();
+      socket.emit('join_room', {
+        'roomId': _activeRoomId,
+        'userId': widget.driverId,
+      });
+    }
   }
 
   Future<void> _fetchHistory() async {
+    if (_activeRoomId == null) return;
+
     try {
       final response = await http.get(
         Uri.parse('http://10.0.2.2:5001/api/messages/$_activeRoomId'),
@@ -275,7 +606,6 @@ class _DriverChatScreenState extends State<DriverChatScreen> {
       io.OptionBuilder()
           .setTransports(['websocket'])
           .disableAutoConnect()
-      // ADDED: Pass the JWT token during the socket connection handshake
           .setAuth({'token': widget.token})
           .build(),
     );
@@ -283,18 +613,23 @@ class _DriverChatScreenState extends State<DriverChatScreen> {
     socket.connect();
 
     socket.onConnect((_) {
-      socket.emit('join_room', {
-        'roomId': _activeRoomId,
-        'userId': widget.driverId,
-      });
+      if (_activeRoomId != null) {
+        socket.emit('join_room', {
+          'roomId': _activeRoomId,
+          'userId': widget.driverId,
+        });
+      }
     });
 
     socket.on('receive_message', (data) {
       if (mounted) {
-        setState(() {
-          _messages.add(Map<String, dynamic>.from(data));
-        });
-        _scrollToBottom();
+        final incoming = Map<String, dynamic>.from(data);
+        if (incoming['roomId'] == null || incoming['roomId'] == _activeRoomId) {
+          setState(() {
+            _messages.add(incoming);
+          });
+          _scrollToBottom();
+        }
       }
     });
 
@@ -310,7 +645,7 @@ class _DriverChatScreenState extends State<DriverChatScreen> {
 
   void _sendMessage() {
     final text = _messageController.text.trim();
-    if (text.isEmpty) return;
+    if (text.isEmpty || _activeRoomId == null) return;
 
     socket.emit('send_message', {
       'roomId': _activeRoomId,
@@ -323,6 +658,8 @@ class _DriverChatScreenState extends State<DriverChatScreen> {
   }
 
   void _onTyping(String value) {
+    if (_activeRoomId == null) return;
+
     socket.emit('typing', {
       'roomId': _activeRoomId,
       'userName': widget.driverName,
@@ -376,7 +713,7 @@ class _DriverChatScreenState extends State<DriverChatScreen> {
   Widget build(BuildContext context) {
     final appBarTitle = _selectedIndex == 0
         ? 'Community Hub'
-        : 'Manager Chat (Personal)';
+        : 'Manager: $_managerName';
 
     return Scaffold(
       appBar: AppBar(
@@ -390,7 +727,9 @@ class _DriverChatScreenState extends State<DriverChatScreen> {
           ),
         ],
       ),
-      body: Column(
+      body: _isLoadingRooms
+          ? const Center(child: CircularProgressIndicator())
+          : Column(
         children: [
           Expanded(
             child: ListView.builder(
@@ -439,13 +778,13 @@ class _DriverChatScreenState extends State<DriverChatScreen> {
           ),
 
           if (_isManagerTyping)
-            const Padding(
-              padding: EdgeInsets.only(left: 16, bottom: 6),
+            Padding(
+              padding: const EdgeInsets.only(left: 16, bottom: 6),
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  'Manager is typing...',
-                  style: TextStyle(
+                  '$_managerName is typing...',
+                  style: const TextStyle(
                     fontStyle: FontStyle.italic,
                     color: Colors.grey,
                     fontSize: 13,
