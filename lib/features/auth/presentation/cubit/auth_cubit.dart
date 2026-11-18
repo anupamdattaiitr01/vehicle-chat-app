@@ -17,17 +17,12 @@ class AuthCubit extends Cubit<AuthState> {
   final NotificationService _notificationService;
 
   AuthCubit({
-    required RestoreSessionUseCase restoreSessionUseCase,
-    required LoginDriverUseCase loginDriverUseCase,
-    required RegisterDriverUseCase registerDriverUseCase,
-    required GetManagersUseCase getManagersUseCase,
-    required NotificationService notificationService,
-  })  : _restoreSessionUseCase = restoreSessionUseCase,
-        _loginDriverUseCase = loginDriverUseCase,
-        _registerDriverUseCase = registerDriverUseCase,
-        _getManagersUseCase = getManagersUseCase,
-        _notificationService = notificationService,
-        super(const AuthInitial());
+    required this._restoreSessionUseCase,
+    required this._loginDriverUseCase,
+    required this._registerDriverUseCase,
+    required this._getManagersUseCase,
+    required this._notificationService,
+  }) : super(const AuthInitial());
 
   Future<void> checkSessionAndNotification() async {
     emit(const AuthSessionChecking());

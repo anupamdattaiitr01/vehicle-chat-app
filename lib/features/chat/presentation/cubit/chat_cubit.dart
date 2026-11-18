@@ -39,25 +39,16 @@ class ChatCubit extends Cubit<ChatState> {
   StreamSubscription<String>? _tokenRefreshSub;
 
   ChatCubit({
-    required ChatRepository chatRepository,
-    required GetMyRoomsUseCase getMyRoomsUseCase,
-    required GetMessageHistoryUseCase getMessageHistoryUseCase,
-    required JoinRoomUseCase joinRoomUseCase,
-    required LeaveRoomUseCase leaveRoomUseCase,
-    required SendMessageUseCase sendMessageUseCase,
-    required SyncFcmTokenUseCase syncFcmTokenUseCase,
-    required LogoutDriverUseCase logoutDriverUseCase,
-    required NotificationService notificationService,
-  })  : _chatRepository = chatRepository,
-        _getMyRoomsUseCase = getMyRoomsUseCase,
-        _getMessageHistoryUseCase = getMessageHistoryUseCase,
-        _joinRoomUseCase = joinRoomUseCase,
-        _leaveRoomUseCase = leaveRoomUseCase,
-        _sendMessageUseCase = sendMessageUseCase,
-        _syncFcmTokenUseCase = syncFcmTokenUseCase,
-        _logoutDriverUseCase = logoutDriverUseCase,
-        _notificationService = notificationService,
-        super(const ChatState());
+    required this._chatRepository,
+    required this._getMyRoomsUseCase,
+    required this._getMessageHistoryUseCase,
+    required this._joinRoomUseCase,
+    required this._leaveRoomUseCase,
+    required this._sendMessageUseCase,
+    required this._syncFcmTokenUseCase,
+    required this._logoutDriverUseCase,
+    required this._notificationService,
+  }) : super(const ChatState());
 
   void initialize(ChatRouteArgs args) {
     _args = args;

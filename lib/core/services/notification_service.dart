@@ -63,7 +63,8 @@ class NotificationService {
   Stream<RemoteMessage> get onMessageOpenedApp =>
       FirebaseMessaging.onMessageOpenedApp;
   Stream<String> get onTokenRefresh =>
-      FirebaseMessaging.instance.onTokenRefresh;
+      // ignore: deprecated_member_use
+  FirebaseMessaging.instance.onTokenRefresh;
 
   Future<void> initialize() async {
     await FirebaseMessaging.instance.requestPermission(
@@ -108,6 +109,7 @@ class NotificationService {
   }
 
   Future<String?> getToken() {
+    // ignore: deprecated_member_use
     return FirebaseMessaging.instance.getToken();
   }
 
