@@ -4,10 +4,8 @@ import '../../features/auth/data/datasources/auth_local_datasource.dart';
 import '../../features/auth/data/datasources/auth_remote_datasource.dart';
 import '../../features/auth/data/repositories/auth_repository_impl.dart';
 import '../../features/auth/domain/repositories/auth_repository.dart';
-import '../../features/auth/domain/usecases/get_managers_usecase.dart';
 import '../../features/auth/domain/usecases/login_driver_usecase.dart';
 import '../../features/auth/domain/usecases/logout_driver_usecase.dart';
-import '../../features/auth/domain/usecases/register_driver_usecase.dart';
 import '../../features/auth/domain/usecases/restore_session_usecase.dart';
 import '../../features/auth/domain/usecases/sync_fcm_token_usecase.dart';
 import '../../features/auth/presentation/cubit/auth_cubit.dart';
@@ -55,8 +53,6 @@ Future<void> initDependencies() async {
   // Auth Feature - Use Cases
   sl.registerLazySingleton(() => RestoreSessionUseCase(sl()));
   sl.registerLazySingleton(() => LoginDriverUseCase(sl()));
-  sl.registerLazySingleton(() => RegisterDriverUseCase(sl()));
-  sl.registerLazySingleton(() => GetManagersUseCase(sl()));
   sl.registerLazySingleton(() => SyncFcmTokenUseCase(sl()));
   sl.registerLazySingleton(() => LogoutDriverUseCase(sl()));
 
@@ -65,8 +61,6 @@ Future<void> initDependencies() async {
         () => AuthCubit(
       restoreSessionUseCase: sl(),
       loginDriverUseCase: sl(),
-      registerDriverUseCase: sl(),
-      getManagersUseCase: sl(),
       notificationService: sl(),
     ),
   );

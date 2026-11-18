@@ -1,7 +1,6 @@
 import 'package:flutter/foundation.dart';
 import '../../../../core/network/dio_client.dart';
 import '../../domain/entities/driver_entity.dart';
-import '../../domain/entities/manager_entity.dart';
 import '../../domain/repositories/auth_repository.dart';
 import '../datasources/auth_local_datasource.dart';
 import '../datasources/auth_remote_datasource.dart';
@@ -39,32 +38,6 @@ class AuthRepositoryImpl implements AuthRepository {
         DioClient.extractErrorMessage(e, fallback: 'Login failed'),
       );
     }
-  }
-
-  @override
-  Future<void> registerDriver({
-    required String name,
-    required String phone,
-    required String password,
-    required String managerId,
-  }) async {
-    try {
-      await remoteDataSource.register(
-        name: name,
-        phone: phone,
-        password: password,
-        managerId: managerId,
-      );
-    } catch (e) {
-      throw AuthException(
-        DioClient.extractErrorMessage(e, fallback: 'Registration failed'),
-      );
-    }
-  }
-
-  @override
-  Future<List<ManagerEntity>> getManagers() {
-    return remoteDataSource.fetchManagers();
   }
 
   @override

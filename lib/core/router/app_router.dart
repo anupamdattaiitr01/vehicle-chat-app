@@ -53,7 +53,7 @@ class AppRouter {
               ? state.extra as LoginRouteArgs
               : const LoginRouteArgs();
           return BlocProvider(
-            create: (_) => sl<AuthCubit>()..fetchManagers(),
+            create: (_) => sl<AuthCubit>(),
             child: LoginPage(pendingTabIndex: args.pendingTabIndex),
           );
         },

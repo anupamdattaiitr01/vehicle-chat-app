@@ -4,7 +4,6 @@ import 'package:go_router/go_router.dart';
 import '../../../../core/router/app_router.dart';
 import '../cubit/auth_cubit.dart';
 import '../cubit/auth_state.dart';
-import '../widgets/manager_dropdown.dart';
 
 class LoginPage extends StatefulWidget {
   final int pendingTabIndex;
@@ -16,21 +15,18 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage> {
-  final TextEditingController _nameController = TextEditingController();
   final TextEditingController _phoneController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
 
   @override
   void dispose() {
-    _nameController.dispose();
     _phoneController.dispose();
     _passwordController.dispose();
     super.dispose();
   }
 
   void _onSubmit() {
-    context.read<AuthCubit>().submitAuth(
-      name: _nameController.text,
+    context.read<AuthCubit>().submitLogin(
       phone: _phoneController.text,
       password: _passwordController.text,
       pendingTabIndex: widget.pendingTabIndex,
@@ -54,8 +50,6 @@ class _LoginPageState extends State<LoginPage> {
                 initialRoomId: state.initialRoomId,
               ),
             );
-          } else if (state is AuthFormState && state.shouldClearPassword) {
-            _passwordController.clear();
           }
         },
         builder: (context, state) {
@@ -87,18 +81,15 @@ class _LoginPageState extends State<LoginPage> {
                       color: Color(0xFF2C3E50),
                     ),
                     const SizedBox(height: 16),
-                    Text(
-                      formState.isRegisterMode
-                          ? 'Driver Registration'
-                          : 'Driver Login',
-                      style: const TextStyle(
+                    const Text(
+                      'Driver Login',
+                      style: TextStyle(
                         fontSize: 24,
                         fontWeight: FontWeight.bold,
                         color: Color(0xFF2C3E50),
                       ),
                     ),
                     const SizedBox(height: 20),
-
                     if (formState.errorMessage.isNotEmpty)
                       Container(
                         width: double.infinity,
@@ -115,37 +106,6 @@ class _LoginPageState extends State<LoginPage> {
                           textAlign: TextAlign.center,
                         ),
                       ),
-
-                    if (formState.successMessage.isNotEmpty)
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(10),
-                        margin: const EdgeInsets.only(bottom: 16),
-                        decoration: BoxDecoration(
-                          color: Colors.green.shade50,
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Text(
-                          formState.successMessage,
-                          style: const TextStyle(
-                              color: Colors.green, fontSize: 13),
-                          textAlign: TextAlign.center,
-                        ),
-                      ),
-
-                    if (formState.isRegisterMode) ...[
-                      TextField(
-                        controller: _nameController,
-                        textCapitalization: TextCapitalization.words,
-                        decoration: const InputDecoration(
-                          labelText: 'Full Name',
-                          border: OutlineInputBorder(),
-                          prefixIcon: Icon(Icons.person),
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                    ],
-
                     TextField(
                       controller: _phoneController,
                       keyboardType: TextInputType.phone,
@@ -156,7 +116,6 @@ class _LoginPageState extends State<LoginPage> {
                       ),
                     ),
                     const SizedBox(height: 16),
-
                     TextField(
                       controller: _passwordController,
                       obscureText: true,
@@ -166,40 +125,6 @@ class _LoginPageState extends State<LoginPage> {
                         prefixIcon: Icon(Icons.lock),
                       ),
                     ),
-
-                    if (formState.isRegisterMode) ...[
-                      const SizedBox(height: 16),
-                      ManagerDropdown(
-                        managers: formState.managers,
-                        selectedManagerId: formState.selectedManagerId,
-                        isLoading: formState.isLoadingManagers,
-                        onChanged: (value) =>
-                            context.read<AuthCubit>().selectManager(value),
-                        onRefresh: () =>
-                            context.read<AuthCubit>().fetchManagers(),
-                      ),
-                      const SizedBox(height: 12),
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 10,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.grey.shade100,
-                          borderRadius: BorderRadius.circular(6),
-                          border: Border.all(color: Colors.grey.shade300),
-                        ),
-                        child: const Text(
-                          'Role: Driver',
-                          style: TextStyle(
-                            color: Colors.black54,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                    ],
-
                     const SizedBox(height: 24),
                     SizedBox(
                       width: double.infinity,
@@ -219,22 +144,19 @@ class _LoginPageState extends State<LoginPage> {
                             strokeWidth: 2,
                           ),
                         )
-                            : Text(
-                          formState.isRegisterMode
-                              ? 'Register as Driver'
-                              : 'Login',
-                          style: const TextStyle(fontSize: 16),
+                            : const Text(
+                          'Login',
+                          style: TextStyle(fontSize: 16),
                         ),
                       ),
                     ),
-                    const SizedBox(height: 12),
-                    TextButton(
-                      onPressed: () =>
-                          context.read<AuthCubit>().toggleAuthMode(),
-                      child: Text(
-                        formState.isRegisterMode
-                            ? 'Already registered? Login here'
-                            : 'New Driver? Register here',
+                    const SizedBox(height: 16),
+                    const Text(
+                      'Accounts are created by your fleet manager.\nContact your manager if you need login credentials.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.black54,
                       ),
                     ),
                   ],

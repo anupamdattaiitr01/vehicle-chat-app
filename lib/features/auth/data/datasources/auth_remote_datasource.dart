@@ -3,7 +3,6 @@ import '../../../../core/network/api_endpoints.dart';
 import '../../../../core/network/dio_client.dart';
 import '../../../../core/utils/crypto_helper.dart';
 import '../models/driver_model.dart';
-import '../models/manager_model.dart';
 
 class AuthException implements Exception {
   final String message;
@@ -18,15 +17,6 @@ abstract class AuthRemoteDataSource {
     required String phone,
     required String password,
   });
-
-  Future<void> register({
-    required String name,
-    required String phone,
-    required String password,
-    required String managerId,
-  });
-
-  Future<List<ManagerModel>> fetchManagers();
 
   Future<void> syncFcmToken(String fcmToken);
 
@@ -62,37 +52,6 @@ class AuthRemoteDataSourceImpl implements AuthRemoteDataSource {
     }
 
     return DriverModel.fromLoginJson(data);
-  }
-
-  @override
-  Future<void> register({
-    required String name,
-    required String phone,
-    required String password,
-    required String managerId,
-  }) async {
-    final rawPayload = json.encode({
-      'name': name.trim(),
-      'phone': phone.trim(),
-      'password': password.trim(),
-      'role': 'driver',
-      'managerId': managerId,
-    });
-    final encryptedPayload = CryptoHelper.encryptPayload(rawPayload);
-
-    await _dioClient.dio.post(
-      ApiEndpoints.register,
-      data: {'data': encryptedPayload},
-    );
-  }
-
-  @override
-  Future<List<ManagerModel>> fetchManagers() async {
-    final response = await _dioClient.dio.get(ApiEndpoints.managers);
-    final list = response.data as List<dynamic>;
-    return list
-        .map((item) => ManagerModel.fromJson(item as Map<String, dynamic>))
-        .toList();
   }
 
   @override
