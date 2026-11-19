@@ -208,13 +208,37 @@ class ChatCubit extends Cubit<ChatState> {
     _messageSub = _chatRepository.messageStream.listen((incoming) {
       if (isClosed) return;
 
+      String nextCommunityPreview = state.communityLastMessage;
+      String nextPersonalPreview = state.personalLastMessage;
+
+      if (incoming.roomId == state.communityRoomId &&
+          incoming.content.trim().isNotEmpty) {
+        nextCommunityPreview = incoming.content.trim();
+      } else if (incoming.roomId == state.personalRoomId &&
+          incoming.content.trim().isNotEmpty) {
+        nextPersonalPreview = incoming.content.trim();
+      }
+
       if (incoming.roomId == null || incoming.roomId == state.activeRoomId) {
         final alreadyExists = incoming.id != null &&
             state.messages.any((m) => m.id == incoming.id);
 
         if (!alreadyExists) {
-          emit(state.copyWith(messages: [...state.messages, incoming]));
+          emit(
+            state.copyWith(
+              messages: [...state.messages, incoming],
+              communityLastMessage: nextCommunityPreview,
+              personalLastMessage: nextPersonalPreview,
+            ),
+          );
         }
+      } else {
+        emit(
+          state.copyWith(
+            communityLastMessage: nextCommunityPreview,
+            personalLastMessage: nextPersonalPreview,
+          ),
+        );
       }
     });
 
@@ -250,6 +274,12 @@ class ChatCubit extends Cubit<ChatState> {
         ),
       );
 
+      // Load latest previews for both rooms in the hub
+      await _preloadRoomPreviews(
+        communityRoomId: rooms.communityRoomId,
+        personalRoomId: rooms.personalRoomId,
+      );
+
       if (nextActiveRoomId != null) {
         await _fetchHistory();
         if (_chatRepository.isSocketConnected) {
@@ -267,14 +297,49 @@ class ChatCubit extends Cubit<ChatState> {
     }
   }
 
-  void onTabTapped(int index) {
-    if (state.selectedTabIndex == index) return;
+  Future<void> _preloadRoomPreviews({
+    String? communityRoomId,
+    String? personalRoomId,
+  }) async {
+    String? communityPreview;
+    String? personalPreview;
 
+    if (communityRoomId != null) {
+      try {
+        final history = await _getMessageHistoryUseCase(communityRoomId);
+        if (history.isNotEmpty) {
+          communityPreview = history.last.content;
+        }
+      } catch (_) {}
+    }
+
+    if (personalRoomId != null) {
+      try {
+        final history = await _getMessageHistoryUseCase(personalRoomId);
+        if (history.isNotEmpty) {
+          personalPreview = history.last.content;
+        }
+      } catch (_) {}
+    }
+
+    if (!isClosed && (communityPreview != null || personalPreview != null)) {
+      emit(
+        state.copyWith(
+          communityLastMessage: communityPreview,
+          personalLastMessage: personalPreview,
+        ),
+      );
+    }
+  }
+
+  void openRoom(int index) {
     final previousRoomId = state.activeRoomId;
     final nextRoomId =
     index == 0 ? state.communityRoomId : state.personalRoomId;
 
-    if (_chatRepository.isSocketConnected && previousRoomId != null) {
+    if (_chatRepository.isSocketConnected &&
+        previousRoomId != null &&
+        previousRoomId != nextRoomId) {
       _leaveRoomUseCase(roomId: previousRoomId, userId: _args.driverId);
     }
 
@@ -282,7 +347,7 @@ class ChatCubit extends Cubit<ChatState> {
       state.copyWith(
         selectedTabIndex: index,
         activeRoomId: nextRoomId,
-        messages: const [],
+        messages: previousRoomId == nextRoomId ? state.messages : const [],
         isManagerTyping: false,
       ),
     );
@@ -295,6 +360,11 @@ class ChatCubit extends Cubit<ChatState> {
     }
   }
 
+  void onTabTapped(int index) {
+    if (state.selectedTabIndex == index) return;
+    openRoom(index);
+  }
+
   Future<void> _fetchHistory() async {
     final roomId = state.activeRoomId;
     if (roomId == null) return;
@@ -302,7 +372,22 @@ class ChatCubit extends Cubit<ChatState> {
     try {
       final history = await _getMessageHistoryUseCase(roomId);
       if (!isClosed) {
-        emit(state.copyWith(messages: history));
+        String? updatedCommunity;
+        String? updatedPersonal;
+        if (history.isNotEmpty) {
+          if (roomId == state.communityRoomId) {
+            updatedCommunity = history.last.content;
+          } else if (roomId == state.personalRoomId) {
+            updatedPersonal = history.last.content;
+          }
+        }
+        emit(
+          state.copyWith(
+            messages: history,
+            communityLastMessage: updatedCommunity,
+            personalLastMessage: updatedPersonal,
+          ),
+        );
       }
     } catch (e) {
       debugPrint('Failed to fetch message history: $e');

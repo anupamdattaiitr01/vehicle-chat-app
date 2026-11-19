@@ -22,6 +22,7 @@ import '../../features/chat/presentation/cubit/chat_cubit.dart';
 import '../network/dio_client.dart';
 import '../services/notification_service.dart';
 import '../services/socket_service.dart';
+import '../theme/theme_cubit.dart';
 
 final GetIt sl = GetIt.instance;
 
@@ -30,6 +31,9 @@ Future<void> initDependencies() async {
   sl.registerLazySingleton<FlutterSecureStorage>(
         () => const FlutterSecureStorage(),
   );
+  sl.registerLazySingleton<ThemeCubit>(() => ThemeCubit(sl()));
+  await sl<ThemeCubit>().loadTheme();
+
   sl.registerLazySingleton<DioClient>(() => DioClient(sl()));
   sl.registerLazySingleton<NotificationService>(() => NotificationService());
   sl.registerLazySingleton<SocketService>(() => SocketService());
