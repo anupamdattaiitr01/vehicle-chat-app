@@ -24,12 +24,16 @@ class SplashPage extends StatelessWidget {
               token: state.driver.token,
               initialTabIndex: state.initialTabIndex,
               initialRoomId: state.initialRoomId,
+              initialBookingData: state.initialBookingData,
             ),
           );
         } else if (state is AuthUnauthenticated) {
           context.go(
             AppRouter.login,
-            extra: LoginRouteArgs(pendingTabIndex: state.pendingTabIndex),
+            extra: LoginRouteArgs(
+              pendingTabIndex: state.pendingTabIndex,
+              pendingBookingData: state.pendingBookingData,
+            ),
           );
         }
       },

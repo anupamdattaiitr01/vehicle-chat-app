@@ -3,14 +3,19 @@ import 'package:go_router/go_router.dart';
 import '../../features/auth/presentation/cubit/auth_cubit.dart';
 import '../../features/auth/presentation/pages/login_page.dart';
 import '../../features/auth/presentation/pages/splash_page.dart';
+import '../../features/booking/presentation/cubit/booking_cubit.dart';
 import '../../features/chat/presentation/cubit/chat_cubit.dart';
 import '../../features/chat/presentation/pages/driver_chat_page.dart';
 import '../di/injection_container.dart';
 
 class LoginRouteArgs {
   final int pendingTabIndex;
+  final Map<String, dynamic>? pendingBookingData;
 
-  const LoginRouteArgs({this.pendingTabIndex = 0});
+  const LoginRouteArgs({
+    this.pendingTabIndex = 0,
+    this.pendingBookingData,
+  });
 }
 
 class ChatRouteArgs {
@@ -19,6 +24,7 @@ class ChatRouteArgs {
   final String token;
   final int initialTabIndex;
   final String? initialRoomId;
+  final Map<String, dynamic>? initialBookingData;
 
   const ChatRouteArgs({
     required this.driverId,
@@ -26,6 +32,7 @@ class ChatRouteArgs {
     required this.token,
     this.initialTabIndex = 0,
     this.initialRoomId,
+    this.initialBookingData,
   });
 }
 
@@ -54,7 +61,10 @@ class AppRouter {
               : const LoginRouteArgs();
           return BlocProvider(
             create: (_) => sl<AuthCubit>(),
-            child: LoginPage(pendingTabIndex: args.pendingTabIndex),
+            child: LoginPage(
+              pendingTabIndex: args.pendingTabIndex,
+              pendingBookingData: args.pendingBookingData,
+            ),
           );
         },
       ),
@@ -62,8 +72,16 @@ class AppRouter {
         path: chat,
         builder: (context, state) {
           final args = state.extra as ChatRouteArgs;
-          return BlocProvider(
-            create: (_) => sl<ChatCubit>()..initialize(args),
+          return MultiBlocProvider(
+            providers: [
+              BlocProvider(
+                create: (_) => sl<ChatCubit>()..initialize(args),
+              ),
+              BlocProvider(
+                create: (_) => sl<BookingCubit>()
+                  ..initialize(initialBookingData: args.initialBookingData),
+              ),
+            ],
             child: DriverChatPage(args: args),
           );
         },

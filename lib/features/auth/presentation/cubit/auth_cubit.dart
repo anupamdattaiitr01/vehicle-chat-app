@@ -21,8 +21,15 @@ class AuthCubit extends Cubit<AuthState> {
   Future<void> checkSessionAndNotification() async {
     emit(const AuthSessionChecking());
     try {
-      final initialMessage = await _notificationService.getInitialMessage();
-      final initialRoomType = initialMessage?.data['roomType']?.toString();
+      final initialLocalData =
+      _notificationService.consumeInitialLocalNotification();
+      final initialFcmMessage = await _notificationService.getInitialMessage();
+
+      final Map<String, dynamic>? launchData =
+          initialLocalData ?? initialFcmMessage?.data;
+
+      final isBookingLaunch = launchData?['type'] == 'BOOKING_ASSIGNED';
+      final initialRoomType = launchData?['roomType']?.toString();
       final initialTab = AppConstants.tabIndexFromRoomType(initialRoomType);
 
       final driver = await _restoreSessionUseCase();
@@ -32,13 +39,15 @@ class AuthCubit extends Cubit<AuthState> {
           AuthAuthenticated(
             driver: driver,
             initialTabIndex: initialTab,
-            initialRoomId: initialMessage?.data['roomId']?.toString(),
+            initialRoomId: launchData?['roomId']?.toString(),
+            initialBookingData: isBookingLaunch ? launchData : null,
           ),
         );
       } else {
         emit(
           AuthUnauthenticated(
-            pendingTabIndex: initialMessage != null ? initialTab : 0,
+            pendingTabIndex: launchData != null ? initialTab : 0,
+            pendingBookingData: isBookingLaunch ? launchData : null,
           ),
         );
       }
@@ -58,6 +67,7 @@ class AuthCubit extends Cubit<AuthState> {
     required String phone,
     required String password,
     int pendingTabIndex = 0,
+    Map<String, dynamic>? pendingBookingData,
   }) async {
     if (phone.trim().isEmpty || password.trim().isEmpty) {
       emit(
@@ -86,6 +96,7 @@ class AuthCubit extends Cubit<AuthState> {
         AuthAuthenticated(
           driver: driver,
           initialTabIndex: pendingTabIndex,
+          initialBookingData: pendingBookingData,
         ),
       );
     } on AuthException catch (e) {

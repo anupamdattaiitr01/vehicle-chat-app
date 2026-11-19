@@ -9,6 +9,8 @@ import '../../features/auth/domain/usecases/logout_driver_usecase.dart';
 import '../../features/auth/domain/usecases/restore_session_usecase.dart';
 import '../../features/auth/domain/usecases/sync_fcm_token_usecase.dart';
 import '../../features/auth/presentation/cubit/auth_cubit.dart';
+import '../../features/booking/data/datasources/booking_remote_datasource.dart';
+import '../../features/booking/presentation/cubit/booking_cubit.dart';
 import '../../features/chat/data/datasources/chat_remote_datasource.dart';
 import '../../features/chat/data/datasources/chat_socket_datasource.dart';
 import '../../features/chat/data/repositories/chat_repository_impl.dart';
@@ -103,6 +105,18 @@ Future<void> initDependencies() async {
       sendMessageUseCase: sl(),
       syncFcmTokenUseCase: sl(),
       logoutDriverUseCase: sl(),
+      notificationService: sl(),
+    ),
+  );
+
+  // Booking Feature
+  sl.registerLazySingleton<BookingRemoteDataSource>(
+        () => BookingRemoteDataSourceImpl(sl()),
+  );
+  sl.registerFactory(
+        () => BookingCubit(
+      remoteDataSource: sl(),
+      socketService: sl(),
       notificationService: sl(),
     ),
   );

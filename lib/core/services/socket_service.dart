@@ -13,6 +13,10 @@ class SocketService {
   StreamController<SocketEventData>.broadcast();
   final StreamController<SocketEventData> _typingController =
   StreamController<SocketEventData>.broadcast();
+  final StreamController<SocketEventData> _bookingAssignedController =
+  StreamController<SocketEventData>.broadcast();
+  final StreamController<SocketEventData> _bookingUpdatedController =
+  StreamController<SocketEventData>.broadcast();
 
   bool _isConnected = false;
 
@@ -20,6 +24,10 @@ class SocketService {
   Stream<bool> get connectionStream => _connectionController.stream;
   Stream<SocketEventData> get messageStream => _messageController.stream;
   Stream<SocketEventData> get typingStream => _typingController.stream;
+  Stream<SocketEventData> get bookingAssignedStream =>
+      _bookingAssignedController.stream;
+  Stream<SocketEventData> get bookingUpdatedStream =>
+      _bookingUpdatedController.stream;
 
   void connect(String token) {
     if (_socket != null) {
@@ -67,6 +75,18 @@ class SocketService {
       }
     });
 
+    _socket!.on('booking_assigned', (data) {
+      if (data is Map) {
+        _bookingAssignedController.add(SocketEventData.from(data));
+      }
+    });
+
+    _socket!.on('booking_status_updated', (data) {
+      if (data is Map) {
+        _bookingUpdatedController.add(SocketEventData.from(data));
+      }
+    });
+
     _socket!.connect();
   }
 
@@ -94,5 +114,7 @@ class SocketService {
     _connectionController.close();
     _messageController.close();
     _typingController.close();
+    _bookingAssignedController.close();
+    _bookingUpdatedController.close();
   }
 }

@@ -9,8 +9,13 @@ import '../cubit/auth_state.dart';
 
 class LoginPage extends StatefulWidget {
   final int pendingTabIndex;
+  final Map<String, dynamic>? pendingBookingData;
 
-  const LoginPage({super.key, this.pendingTabIndex = 0});
+  const LoginPage({
+    super.key,
+    this.pendingTabIndex = 0,
+    this.pendingBookingData,
+  });
 
   @override
   State<LoginPage> createState() => _LoginPageState();
@@ -34,6 +39,7 @@ class _LoginPageState extends State<LoginPage> {
       phone: _phoneController.text,
       password: _passwordController.text,
       pendingTabIndex: widget.pendingTabIndex,
+      pendingBookingData: widget.pendingBookingData,
     );
   }
 
@@ -69,6 +75,7 @@ class _LoginPageState extends State<LoginPage> {
                     token: state.driver.token,
                     initialTabIndex: state.initialTabIndex,
                     initialRoomId: state.initialRoomId,
+                    initialBookingData: state.initialBookingData,
                   ),
                 );
               }

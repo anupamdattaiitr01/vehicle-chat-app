@@ -20,24 +20,35 @@ class AuthAuthenticated extends AuthState {
   final DriverEntity driver;
   final int initialTabIndex;
   final String? initialRoomId;
+  final Map<String, dynamic>? initialBookingData;
 
   const AuthAuthenticated({
     required this.driver,
     this.initialTabIndex = 0,
     this.initialRoomId,
+    this.initialBookingData,
   });
 
   @override
-  List<Object?> get props => [driver, initialTabIndex, initialRoomId];
+  List<Object?> get props => [
+    driver,
+    initialTabIndex,
+    initialRoomId,
+    initialBookingData,
+  ];
 }
 
 class AuthUnauthenticated extends AuthState {
   final int pendingTabIndex;
+  final Map<String, dynamic>? pendingBookingData;
 
-  const AuthUnauthenticated({this.pendingTabIndex = 0});
+  const AuthUnauthenticated({
+    this.pendingTabIndex = 0,
+    this.pendingBookingData,
+  });
 
   @override
-  List<Object?> get props => [pendingTabIndex];
+  List<Object?> get props => [pendingTabIndex, pendingBookingData];
 }
 
 class AuthFormState extends AuthState {
