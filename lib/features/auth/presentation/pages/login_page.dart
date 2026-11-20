@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 import '../../../../core/router/app_router.dart';
@@ -25,6 +26,7 @@ class _LoginPageState extends State<LoginPage> {
   final TextEditingController _phoneController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   bool _obscurePassword = true;
+  String _localValidationError = '';
 
   @override
   void dispose() {
@@ -35,8 +37,22 @@ class _LoginPageState extends State<LoginPage> {
 
   void _onSubmit() {
     FocusScope.of(context).unfocus();
+    final digitsOnlyPhone =
+    _phoneController.text.replaceAll(RegExp(r'\D'), '');
+
+    if (digitsOnlyPhone.length != 10) {
+      setState(() {
+        _localValidationError = 'Phone number must be exactly 10 digits.';
+      });
+      return;
+    }
+
+    if (_localValidationError.isNotEmpty) {
+      setState(() => _localValidationError = '');
+    }
+
     context.read<AuthCubit>().submitLogin(
-      phone: _phoneController.text,
+      phone: digitsOnlyPhone,
       password: _passwordController.text,
       pendingTabIndex: widget.pendingTabIndex,
       pendingBookingData: widget.pendingBookingData,
@@ -83,6 +99,10 @@ class _LoginPageState extends State<LoginPage> {
             builder: (context, state) {
               final formState =
               state is AuthFormState ? state : const AuthFormState();
+              final displayedError = _localValidationError.isNotEmpty
+                  ? _localValidationError
+                  : formState.errorMessage;
+              final isPhoneValid = _phoneController.text.length == 10;
 
               return Column(
                 children: [
@@ -166,7 +186,7 @@ class _LoginPageState extends State<LoginPage> {
                                 ),
                                 const SizedBox(height: 6),
                                 Text(
-                                  'Enter the phone number & password assigned by your manager',
+                                  'Enter the 10-digit phone number & password assigned by your manager',
                                   textAlign: TextAlign.center,
                                   style: TextStyle(
                                     fontSize: 13,
@@ -176,7 +196,7 @@ class _LoginPageState extends State<LoginPage> {
                                 ),
                                 const SizedBox(height: 24),
 
-                                if (formState.errorMessage.isNotEmpty)
+                                if (displayedError.isNotEmpty)
                                   Container(
                                     width: double.infinity,
                                     padding: const EdgeInsets.symmetric(
@@ -204,7 +224,7 @@ class _LoginPageState extends State<LoginPage> {
                                         const SizedBox(width: 8),
                                         Expanded(
                                           child: Text(
-                                            formState.errorMessage,
+                                            displayedError,
                                             style: TextStyle(
                                               color: isDark
                                                   ? const Color(0xFFFF8A80)
@@ -220,15 +240,30 @@ class _LoginPageState extends State<LoginPage> {
 
                                 TextField(
                                   controller: _phoneController,
-                                  keyboardType: TextInputType.phone,
+                                  keyboardType: TextInputType.number,
                                   textInputAction: TextInputAction.next,
+                                  maxLength: 10,
+                                  inputFormatters: [
+                                    FilteringTextInputFormatter.digitsOnly,
+                                    LengthLimitingTextInputFormatter(10),
+                                  ],
+                                  onChanged: (_) {
+                                    setState(() {
+                                      if (_localValidationError.isNotEmpty &&
+                                          _phoneController.text.length == 10) {
+                                        _localValidationError = '';
+                                      }
+                                    });
+                                  },
                                   style: TextStyle(
                                     color: milo.textPrimary,
                                     fontSize: 15,
                                   ),
                                   decoration: InputDecoration(
                                     labelText: 'Phone Number',
-                                    hintText: 'e.g. 9876543210',
+                                    hintText: '10-digit mobile number',
+                                    counterText:
+                                    '${_phoneController.text.length}/10',
                                     prefixIcon: Icon(
                                       Icons.phone_outlined,
                                       color: milo.textSecondary,
@@ -276,14 +311,15 @@ class _LoginPageState extends State<LoginPage> {
                                   width: double.infinity,
                                   height: 52,
                                   child: ElevatedButton(
-                                    onPressed: formState.isSubmitting
+                                    onPressed:
+                                    formState.isSubmitting || !isPhoneValid
                                         ? null
                                         : _onSubmit,
                                     style: ElevatedButton.styleFrom(
                                       backgroundColor: milo.burgundy,
                                       foregroundColor: Colors.white,
                                       disabledBackgroundColor: milo.burgundy
-                                          .withValues(alpha: 0.5),
+                                          .withValues(alpha: 0.4),
                                       elevation: 0,
                                       shape: RoundedRectangleBorder(
                                         borderRadius: BorderRadius.circular(14),

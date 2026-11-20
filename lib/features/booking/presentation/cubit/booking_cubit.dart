@@ -15,11 +15,14 @@ class BookingCubit extends Cubit<BookingState> {
 
   StreamSubscription<SocketEventData>? _bookingAssignedSub;
   StreamSubscription<SocketEventData>? _bookingUpdatedSub;
+  StreamSubscription<SocketEventData>? _bookingReallocatedSub;
   StreamSubscription<RemoteMessage>? _foregroundFcmSub;
   StreamSubscription<RemoteMessage>? _openedFcmSub;
   StreamSubscription<NotificationData>? _localTapSub;
+  Timer? _expiryPruningTimer;
 
   final Set<String> _minimizedBookingIds = <String>{};
+  final Set<String> _respondedBookingIds = <String>{};
 
   BookingCubit({
     required this._remoteDataSource,
@@ -32,7 +35,9 @@ class BookingCubit extends Cubit<BookingState> {
     if (initialBookingData != null &&
         initialBookingData['type'] == 'BOOKING_ASSIGNED') {
       initialIncoming = BookingEntity.fromMap(initialBookingData);
-      if (initialIncoming.id.isEmpty) {
+      if (initialIncoming.id.isEmpty ||
+          !initialIncoming.isPending ||
+          !initialIncoming.isUpcoming) {
         initialIncoming = null;
       }
     }
@@ -41,13 +46,27 @@ class BookingCubit extends Cubit<BookingState> {
       emit(
         state.copyWith(
           activeIncomingBooking: initialIncoming,
+          openSheetInQueryMode: false,
           bookings: [initialIncoming],
         ),
       );
     }
 
+    _startExpiryTimer();
     _bindRealtimeStreams();
     fetchMyBookings();
+  }
+
+  void _startExpiryTimer() {
+    _expiryPruningTimer?.cancel();
+    _expiryPruningTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (isClosed) return;
+      final upcomingOnly =
+      state.bookings.where((b) => b.isUpcoming).toList();
+      if (upcomingOnly.length != state.bookings.length) {
+        emit(state.copyWith(bookings: upcomingOnly));
+      }
+    });
   }
 
   void _bindRealtimeStreams() {
@@ -55,6 +74,8 @@ class BookingCubit extends Cubit<BookingState> {
     _bookingAssignedSub = _socketService.bookingAssignedStream.listen((data) {
       final booking = BookingEntity.fromMap(data);
       if (booking.id.isEmpty) return;
+      _respondedBookingIds.remove(booking.id);
+      _minimizedBookingIds.remove(booking.id);
       _handleIncomingBooking(booking);
     });
 
@@ -62,8 +83,62 @@ class BookingCubit extends Cubit<BookingState> {
     _bookingUpdatedSub = _socketService.bookingUpdatedStream.listen((data) {
       final updated = BookingEntity.fromMap(data);
       if (updated.id.isEmpty) return;
+
+      if (updated.isCancelled) {
+        unawaited(_notificationService.cancelBookingNotification(updated.id));
+        final remaining =
+        state.bookings.where((b) => b.id != updated.id).toList();
+        final shouldClearSheet = state.activeIncomingBooking?.id == updated.id;
+        emit(
+          state.copyWith(
+            bookings: remaining,
+            clearActiveIncoming: shouldClearSheet,
+            openSheetInQueryMode:
+            shouldClearSheet ? false : state.openSheetInQueryMode,
+            snackBarMessage:
+            'Ride for ${updated.passengerName} was cancelled by your manager.',
+          ),
+        );
+        return;
+      }
+
+      if (!updated.isPending) {
+        _respondedBookingIds.add(updated.id);
+        unawaited(_notificationService.cancelBookingNotification(updated.id));
+      }
       _upsertBookingInList(updated);
+      if (!updated.isPending &&
+          state.activeIncomingBooking?.id == updated.id) {
+        emit(
+          state.copyWith(
+            clearActiveIncoming: true,
+            openSheetInQueryMode: false,
+          ),
+        );
+      }
     });
+
+    _bookingReallocatedSub?.cancel();
+    _bookingReallocatedSub =
+        _socketService.bookingReallocatedStream.listen((data) {
+          final bookingId = (data['bookingId'] ?? '').toString();
+          if (bookingId.isEmpty) return;
+
+          unawaited(_notificationService.cancelBookingNotification(bookingId));
+          final remaining =
+          state.bookings.where((b) => b.id != bookingId).toList();
+          final shouldClearSheet = state.activeIncomingBooking?.id == bookingId;
+
+          emit(
+            state.copyWith(
+              bookings: remaining,
+              clearActiveIncoming: shouldClearSheet,
+              openSheetInQueryMode:
+              shouldClearSheet ? false : state.openSheetInQueryMode,
+              snackBarMessage: 'A ride was reassigned by your manager.',
+            ),
+          );
+        });
 
     _foregroundFcmSub?.cancel();
     _foregroundFcmSub =
@@ -81,7 +156,8 @@ class BookingCubit extends Cubit<BookingState> {
         _notificationService.onMessageOpenedApp.listen((RemoteMessage msg) {
           if (msg.data['type'] == 'BOOKING_ASSIGNED') {
             final booking = BookingEntity.fromMap(msg.data);
-            if (booking.id.isNotEmpty) {
+            if (booking.id.isNotEmpty &&
+                !_respondedBookingIds.contains(booking.id)) {
               _minimizedBookingIds.remove(booking.id);
               _handleIncomingBooking(booking);
             }
@@ -93,7 +169,8 @@ class BookingCubit extends Cubit<BookingState> {
         _notificationService.onLocalNotificationTap.listen((NotificationData data) {
           if (data['type'] == 'BOOKING_ASSIGNED') {
             final booking = BookingEntity.fromMap(data);
-            if (booking.id.isNotEmpty) {
+            if (booking.id.isNotEmpty &&
+                !_respondedBookingIds.contains(booking.id)) {
               _minimizedBookingIds.remove(booking.id);
               _handleIncomingBooking(booking);
             }
@@ -102,13 +179,26 @@ class BookingCubit extends Cubit<BookingState> {
   }
 
   void _handleIncomingBooking(BookingEntity booking) {
-    if (isClosed) return;
+    if (isClosed || !booking.isUpcoming) return;
+
+    final existingIdx = state.bookings.indexWhere((b) => b.id == booking.id);
+    final alreadyHandled = _respondedBookingIds.contains(booking.id) ||
+        (existingIdx >= 0 && !state.bookings[existingIdx].isPending);
+
+    if (alreadyHandled && booking.isPending) {
+      return;
+    }
+
     _upsertBookingInList(booking);
 
-    if (booking.isPending && !_minimizedBookingIds.contains(booking.id)) {
+    if (booking.isPending &&
+        !alreadyHandled &&
+        !_minimizedBookingIds.contains(booking.id) &&
+        state.activeIncomingBooking?.id != booking.id) {
       emit(
         state.copyWith(
           activeIncomingBooking: booking,
+          openSheetInQueryMode: false,
           clearError: true,
         ),
       );
@@ -116,13 +206,12 @@ class BookingCubit extends Cubit<BookingState> {
   }
 
   void _upsertBookingInList(BookingEntity booking) {
-    final existingIdx = state.bookings.indexWhere((b) => b.id == booking.id);
-    final updatedList = List<BookingEntity>.from(state.bookings);
-    if (existingIdx >= 0) {
-      updatedList[existingIdx] = booking;
-    } else {
-      updatedList.insert(0, booking);
+    final updatedList =
+    state.bookings.where((b) => b.isUpcoming && b.id != booking.id).toList();
+    if (booking.isUpcoming) {
+      updatedList.add(booking);
     }
+    updatedList.sort((a, b) => a.sortTimestamp.compareTo(b.sortTimestamp));
     emit(state.copyWith(bookings: updatedList));
   }
 
@@ -133,10 +222,30 @@ class BookingCubit extends Cubit<BookingState> {
       final fetched = await _remoteDataSource.fetchMyBookings();
       if (isClosed) return;
 
+      final upcomingOnly = fetched.where((b) => b.isUpcoming).toList()
+        ..sort((a, b) => a.sortTimestamp.compareTo(b.sortTimestamp));
+
+      for (final b in upcomingOnly) {
+        if (!b.isPending) {
+          _respondedBookingIds.add(b.id);
+          unawaited(_notificationService.cancelBookingNotification(b.id));
+        }
+      }
+
       BookingEntity? nextIncoming = state.activeIncomingBooking;
+      if (nextIncoming != null &&
+          (!nextIncoming.isUpcoming ||
+              (!state.openSheetInQueryMode &&
+                  _respondedBookingIds.contains(nextIncoming.id)))) {
+        nextIncoming = null;
+      }
+
       if (nextIncoming == null) {
-        final firstPending = fetched.where(
-              (b) => b.isPending && !_minimizedBookingIds.contains(b.id),
+        final firstPending = upcomingOnly.where(
+              (b) =>
+          b.isPending &&
+              !_respondedBookingIds.contains(b.id) &&
+              !_minimizedBookingIds.contains(b.id),
         );
         if (firstPending.isNotEmpty) {
           nextIncoming = firstPending.first;
@@ -145,8 +254,11 @@ class BookingCubit extends Cubit<BookingState> {
 
       emit(
         state.copyWith(
-          bookings: fetched,
+          bookings: upcomingOnly,
           activeIncomingBooking: nextIncoming,
+          clearActiveIncoming: nextIncoming == null,
+          openSheetInQueryMode:
+          nextIncoming == null ? false : state.openSheetInQueryMode,
           isLoading: false,
         ),
       );
@@ -158,11 +270,19 @@ class BookingCubit extends Cubit<BookingState> {
     }
   }
 
-  void openBookingCard(BookingEntity booking) {
+  /// Opens the booking sheet for pending rides OR confirmed/queried rides (in query mode).
+  void openBookingCard(
+      BookingEntity booking, {
+        bool startInQueryMode = false,
+      }) {
+    if (!booking.isUpcoming || booking.isCancelled) {
+      return;
+    }
     _minimizedBookingIds.remove(booking.id);
     emit(
       state.copyWith(
         activeIncomingBooking: booking,
+        openSheetInQueryMode: startInQueryMode || !booking.isPending,
         clearError: true,
       ),
     );
@@ -170,10 +290,16 @@ class BookingCubit extends Cubit<BookingState> {
 
   void minimizeBookingCard() {
     final current = state.activeIncomingBooking;
-    if (current != null) {
+    if (current != null && current.isPending) {
       _minimizedBookingIds.add(current.id);
     }
-    emit(state.copyWith(clearActiveIncoming: true, clearError: true));
+    emit(
+      state.copyWith(
+        clearActiveIncoming: true,
+        openSheetInQueryMode: false,
+        clearError: true,
+      ),
+    );
   }
 
   Future<void> confirmBooking(String bookingId) async {
@@ -187,11 +313,14 @@ class BookingCubit extends Cubit<BookingState> {
       );
       if (isClosed) return;
 
+      _respondedBookingIds.add(bookingId);
+      unawaited(_notificationService.cancelBookingNotification(bookingId));
       _upsertBookingInList(updated);
       emit(
         state.copyWith(
           isSubmittingResponse: false,
           clearActiveIncoming: true,
+          openSheetInQueryMode: false,
           snackBarMessage: 'Ride confirmed with your manager!',
         ),
       );
@@ -228,11 +357,14 @@ class BookingCubit extends Cubit<BookingState> {
       );
       if (isClosed) return;
 
+      _respondedBookingIds.add(bookingId);
+      unawaited(_notificationService.cancelBookingNotification(bookingId));
       _upsertBookingInList(updated);
       emit(
         state.copyWith(
           isSubmittingResponse: false,
           clearActiveIncoming: true,
+          openSheetInQueryMode: false,
           navigateToManagerChat: true,
           snackBarMessage: 'Query sent to your manager chat.',
         ),
@@ -255,8 +387,10 @@ class BookingCubit extends Cubit<BookingState> {
 
   @override
   Future<void> close() {
+    _expiryPruningTimer?.cancel();
     _bookingAssignedSub?.cancel();
     _bookingUpdatedSub?.cancel();
+    _bookingReallocatedSub?.cancel();
     _foregroundFcmSub?.cancel();
     _openedFcmSub?.cancel();
     _localTapSub?.cancel();

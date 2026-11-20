@@ -31,7 +31,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   final androidPlugin = plugin.resolvePlatformSpecificImplementation<
       AndroidFlutterLocalNotificationsPlugin>();
 
-  // 1. High-Priority Full-Screen Intent Ride Assignment Alert
+  // 1. High-Priority Full-Screen Intent Ride Assignment Alert (wakes app in kill mode)
   if (message.data['type'] == 'BOOKING_ASSIGNED') {
     await androidPlugin?.createNotificationChannel(
       const AndroidNotificationChannel(
@@ -44,12 +44,21 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       ),
     );
 
+    final rawBookingId = (message.data['_id'] ??
+        message.data['bookingId'] ??
+        message.data['id'] ??
+        '')
+        .toString();
+    final notificationId = rawBookingId.isNotEmpty
+        ? NotificationService.bookingNotificationId(rawBookingId)
+        : DateTime.now().millisecondsSinceEpoch.remainder(1000000000);
+
     final passengerName = message.data['passengerName'] ?? 'Passenger';
     final pickup = message.data['pickupLocation'] ?? 'Pickup location';
     final scheduledTime = message.data['scheduledTime'] ?? '';
 
     await plugin.show(
-      id: DateTime.now().millisecondsSinceEpoch.remainder(1000000000),
+      id: notificationId,
       title: 'New Ride Assigned • $passengerName',
       body: '$scheduledTime • Pickup: $pickup',
       notificationDetails: const NotificationDetails(
@@ -128,6 +137,12 @@ class NotificationService {
     enableVibration: true,
   );
 
+  /// Deterministic 31-bit notification ID per booking so duplicate pushes
+  /// overwrite each other and responses can dismiss the exact tray alert.
+  static int bookingNotificationId(String bookingId) {
+    return bookingId.hashCode & 0x7fffffff;
+  }
+
   Stream<NotificationData> get onLocalNotificationTap =>
       _notificationTapController.stream;
   Stream<RemoteMessage> get onForegroundMessage => FirebaseMessaging.onMessage;
@@ -183,6 +198,15 @@ class NotificationService {
     await androidPlugin?.requestNotificationsPermission();
     await androidPlugin?.createNotificationChannel(_fleetChannel);
     await androidPlugin?.createNotificationChannel(_bookingChannel);
+  }
+
+  /// Dismisses the ongoing ride alert from the Android notification shade
+  /// once the driver confirms or raises a query.
+  Future<void> cancelBookingNotification(String bookingId) async {
+    if (bookingId.isEmpty) return;
+    try {
+      await _localNotifications.cancel(id: bookingNotificationId(bookingId));
+    } catch (_) {}
   }
 
   NotificationData? _decodePayload(String? rawPayload) {
