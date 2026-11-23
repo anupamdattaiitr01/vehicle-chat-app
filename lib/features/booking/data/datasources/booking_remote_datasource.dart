@@ -1,5 +1,6 @@
 import '../../../../core/constants/app_constants.dart';
 import '../../../../core/network/dio_client.dart';
+import '../../../../core/services/overlay_service.dart';
 import '../../domain/entities/booking_entity.dart';
 
 class BookingException implements Exception {
@@ -14,12 +15,15 @@ abstract class BookingRemoteDataSource {
     required String action,
     String? queryText,
   });
+  Future<bool> showSystemOverlayForBooking(BookingEntity booking);
 }
 
 class BookingRemoteDataSourceImpl implements BookingRemoteDataSource {
   final DioClient _dioClient;
 
-  BookingRemoteDataSourceImpl(this._dioClient);
+  BookingRemoteDataSourceImpl(this._dioClient) {
+    OverlayService.cacheBaseUrl(_dioClient.dio.options.baseUrl);
+  }
 
   @override
   Future<List<BookingEntity>> fetchMyBookings() async {
@@ -65,5 +69,18 @@ class BookingRemoteDataSourceImpl implements BookingRemoteDataSource {
         ),
       );
     }
+  }
+
+  @override
+  Future<bool> showSystemOverlayForBooking(BookingEntity booking) {
+    return OverlayService.showBookingOverlay({
+      '_id': booking.id,
+      'baseUrl': _dioClient.dio.options.baseUrl,
+      'passengerName': booking.passengerName,
+      'passengerPhone': booking.passengerPhone,
+      'pickupLocation': booking.pickupLocation,
+      'dropLocation': booking.dropLocation,
+      'scheduledTime': booking.scheduledTime,
+    });
   }
 }

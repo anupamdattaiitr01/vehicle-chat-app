@@ -1,10 +1,10 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
-import '../../../../core/di/injection_container.dart';
 import '../../../../core/router/app_router.dart';
-import '../../../../core/services/notification_service.dart';
+import '../../../../core/services/overlay_service.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/theme/theme_cubit.dart';
 import '../../../booking/domain/entities/booking_entity.dart';
@@ -36,17 +36,20 @@ class _DriverChatPageState extends State<DriverChatPage>
   String _rideFilter = 'all'; // 'all' | 'pending' | 'confirmed' | 'query_raised'
   bool _handledInitialDeepLink = false;
   bool _isBookingSheetOpen = false;
-  bool _canUseFullScreenIntent = true;
+  bool _hasOverlayPermission = true;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _checkFullScreenPermission();
+    _checkOverlayPermission();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      final bookingState = context.read<BookingCubit>().state;
+      final bookingCubit = context.read<BookingCubit>();
+      bookingCubit.setAppForegroundState(true);
+
+      final bookingState = bookingCubit.state;
       final initialBooking = bookingState.activeIncomingBooking;
       if (initialBooking != null &&
           initialBooking.isUpcoming &&
@@ -59,19 +62,25 @@ class _DriverChatPageState extends State<DriverChatPage>
     });
   }
 
-  Future<void> _checkFullScreenPermission() async {
-    final allowed = await sl<NotificationService>().canUseFullScreenIntent();
-    if (mounted && allowed != _canUseFullScreenIntent) {
-      setState(() => _canUseFullScreenIntent = allowed);
+  Future<void> _checkOverlayPermission() async {
+    if (!Platform.isAndroid) return;
+    final allowed = await OverlayService.isPermissionGranted();
+    if (mounted && allowed != _hasOverlayPermission) {
+      setState(() => _hasOverlayPermission = allowed);
     }
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     context.read<ChatCubit>().onAppLifecycleChanged(state);
-    if (state == AppLifecycleState.resumed) {
-      _checkFullScreenPermission();
-      context.read<BookingCubit>().fetchMyBookings();
+
+    final bookingCubit = context.read<BookingCubit>();
+    final isForeground = state == AppLifecycleState.resumed;
+    bookingCubit.setAppForegroundState(isForeground);
+
+    if (isForeground) {
+      _checkOverlayPermission();
+      bookingCubit.onAppResumed();
     }
   }
 
@@ -1364,7 +1373,8 @@ class _DriverChatPageState extends State<DriverChatPage>
             ),
           ),
 
-          if (!_canUseFullScreenIntent) ...[
+          // SYSTEM_ALERT_WINDOW ("Display over other apps") Permission Banner
+          if (Platform.isAndroid && !_hasOverlayPermission) ...[
             const SizedBox(height: 18),
             Container(
               padding: const EdgeInsets.all(14),
@@ -1378,14 +1388,14 @@ class _DriverChatPageState extends State<DriverChatPage>
               child: Row(
                 children: [
                   Icon(
-                    Icons.notifications_active_rounded,
+                    Icons.layers_rounded,
                     color: milo.badgeAmberText,
                     size: 22,
                   ),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(
-                      'Enable full-screen ride alerts so incoming bookings wake your screen in kill mode.',
+                      'Enable "Display over other apps" so incoming ride offers float directly over Google Maps.',
                       style: TextStyle(
                         fontSize: 12.5,
                         fontWeight: FontWeight.w600,
@@ -1395,8 +1405,10 @@ class _DriverChatPageState extends State<DriverChatPage>
                   ),
                   const SizedBox(width: 8),
                   TextButton(
-                    onPressed: () => sl<NotificationService>()
-                        .openFullScreenIntentSettings(),
+                    onPressed: () async {
+                      await OverlayService.requestPermission();
+                      await _checkOverlayPermission();
+                    },
                     child: Text(
                       'Enable',
                       style: TextStyle(

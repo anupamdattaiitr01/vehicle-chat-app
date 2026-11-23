@@ -1,8 +1,11 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import '../../../../core/services/notification_service.dart';
+import '../../../../core/services/overlay_service.dart';
 import '../../../../core/services/socket_service.dart';
 import '../../data/datasources/booking_remote_datasource.dart';
 import '../../domain/entities/booking_entity.dart';
@@ -19,16 +22,22 @@ class BookingCubit extends Cubit<BookingState> {
   StreamSubscription<RemoteMessage>? _foregroundFcmSub;
   StreamSubscription<RemoteMessage>? _openedFcmSub;
   StreamSubscription<NotificationData>? _localTapSub;
+  StreamSubscription<dynamic>? _overlayEventSub;
   Timer? _expiryPruningTimer;
 
   final Set<String> _minimizedBookingIds = <String>{};
   final Set<String> _respondedBookingIds = <String>{};
+  bool _isAppInForeground = true;
 
   BookingCubit({
     required this._remoteDataSource,
     required this._socketService,
     required this._notificationService,
   }) : super(const BookingState());
+
+  void setAppForegroundState(bool isForeground) {
+    _isAppInForeground = isForeground;
+  }
 
   void initialize({Map<String, dynamic>? initialBookingData}) {
     BookingEntity? initialIncoming;
@@ -54,7 +63,14 @@ class BookingCubit extends Cubit<BookingState> {
 
     _startExpiryTimer();
     _bindRealtimeStreams();
-    fetchMyBookings();
+    _bindOverlayListener();
+    onAppResumed();
+  }
+
+  /// Called on startup and whenever DriverChatPage returns to foreground.
+  Future<void> onAppResumed() async {
+    await fetchMyBookings();
+    await _checkPendingOverlayQuery();
   }
 
   void _startExpiryTimer() {
@@ -69,6 +85,53 @@ class BookingCubit extends Cubit<BookingState> {
     });
   }
 
+  void _bindOverlayListener() {
+    if (!Platform.isAndroid) return;
+    _overlayEventSub?.cancel();
+    try {
+      _overlayEventSub = FlutterOverlayWindow.overlayListener.listen((event) {
+        if (isClosed || event is! Map) return;
+        final payload = Map<String, dynamic>.from(event);
+        final action = (payload['overlayAction'] ?? '').toString();
+        final bookingId = (payload['bookingId'] ?? '').toString();
+        if (bookingId.isEmpty) return;
+
+        if (action == 'confirmed') {
+          _respondedBookingIds.add(bookingId);
+          unawaited(_notificationService.cancelBookingNotification(bookingId));
+          final shouldClearSheet =
+              state.activeIncomingBooking?.id == bookingId;
+          emit(
+            state.copyWith(
+              clearActiveIncoming: shouldClearSheet,
+              openSheetInQueryMode:
+              shouldClearSheet ? false : state.openSheetInQueryMode,
+              snackBarMessage: 'Ride confirmed with your manager!',
+            ),
+          );
+          fetchMyBookings();
+        } else if (action == 'open_query') {
+          _openQueryForBookingId(bookingId);
+        }
+      });
+    } catch (e) {
+      debugPrint('Overlay listener error: $e');
+    }
+  }
+
+  Future<void> _checkPendingOverlayQuery() async {
+    final pendingQueryId = await OverlayService.consumePendingQueryBookingId();
+    if (pendingQueryId == null || pendingQueryId.isEmpty || isClosed) return;
+    _openQueryForBookingId(pendingQueryId);
+  }
+
+  void _openQueryForBookingId(String bookingId) {
+    final idx = state.bookings.indexWhere((b) => b.id == bookingId);
+    if (idx >= 0) {
+      openBookingCard(state.bookings[idx], startInQueryMode: true);
+    }
+  }
+
   void _bindRealtimeStreams() {
     _bookingAssignedSub?.cancel();
     _bookingAssignedSub = _socketService.bookingAssignedStream.listen((data) {
@@ -76,7 +139,7 @@ class BookingCubit extends Cubit<BookingState> {
       if (booking.id.isEmpty) return;
       _respondedBookingIds.remove(booking.id);
       _minimizedBookingIds.remove(booking.id);
-      _handleIncomingBooking(booking);
+      unawaited(_handleIncomingBooking(booking));
     });
 
     _bookingUpdatedSub?.cancel();
@@ -146,7 +209,7 @@ class BookingCubit extends Cubit<BookingState> {
           if (msg.data['type'] == 'BOOKING_ASSIGNED') {
             final booking = BookingEntity.fromMap(msg.data);
             if (booking.id.isNotEmpty) {
-              _handleIncomingBooking(booking);
+              unawaited(_handleIncomingBooking(booking));
             }
           }
         });
@@ -159,7 +222,7 @@ class BookingCubit extends Cubit<BookingState> {
             if (booking.id.isNotEmpty &&
                 !_respondedBookingIds.contains(booking.id)) {
               _minimizedBookingIds.remove(booking.id);
-              _handleIncomingBooking(booking);
+              unawaited(_handleIncomingBooking(booking));
             }
           }
         });
@@ -172,13 +235,13 @@ class BookingCubit extends Cubit<BookingState> {
             if (booking.id.isNotEmpty &&
                 !_respondedBookingIds.contains(booking.id)) {
               _minimizedBookingIds.remove(booking.id);
-              _handleIncomingBooking(booking);
+              unawaited(_handleIncomingBooking(booking));
             }
           }
         });
   }
 
-  void _handleIncomingBooking(BookingEntity booking) {
+  Future<void> _handleIncomingBooking(BookingEntity booking) async {
     if (isClosed || !booking.isUpcoming) return;
 
     final existingIdx = state.bookings.indexWhere((b) => b.id == booking.id);
@@ -195,13 +258,24 @@ class BookingCubit extends Cubit<BookingState> {
         !alreadyHandled &&
         !_minimizedBookingIds.contains(booking.id) &&
         state.activeIncomingBooking?.id != booking.id) {
-      emit(
-        state.copyWith(
-          activeIncomingBooking: booking,
-          openSheetInQueryMode: false,
-          clearError: true,
-        ),
-      );
+      // If driver is minimized / navigating in Google Maps, float SYSTEM_ALERT_WINDOW overlay
+      if (!_isAppInForeground) {
+        final overlayShown =
+        await _remoteDataSource.showSystemOverlayForBooking(booking);
+        if (overlayShown) {
+          return;
+        }
+      }
+
+      if (!isClosed) {
+        emit(
+          state.copyWith(
+            activeIncomingBooking: booking,
+            openSheetInQueryMode: false,
+            clearError: true,
+          ),
+        );
+      }
     }
   }
 
@@ -240,7 +314,9 @@ class BookingCubit extends Cubit<BookingState> {
         nextIncoming = null;
       }
 
-      if (nextIncoming == null) {
+      final overlayActive = await OverlayService.isActive();
+
+      if (nextIncoming == null && !overlayActive) {
         final firstPending = upcomingOnly.where(
               (b) =>
           b.isPending &&
@@ -394,6 +470,7 @@ class BookingCubit extends Cubit<BookingState> {
     _foregroundFcmSub?.cancel();
     _openedFcmSub?.cancel();
     _localTapSub?.cancel();
+    _overlayEventSub?.cancel();
     return super.close();
   }
 }
