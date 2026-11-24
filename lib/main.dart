@@ -5,21 +5,8 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'core/di/injection_container.dart';
 import 'core/router/app_router.dart';
 import 'core/services/notification_service.dart';
-import 'core/services/overlay_service.dart';
 import 'core/theme/app_theme.dart';
 import 'core/theme/theme_cubit.dart';
-
-/// Separate Flutter Engine entry point for Android SYSTEM_ALERT_WINDOW overlays.
-@pragma('vm:entry-point')
-void overlayMain() {
-  WidgetsFlutterBinding.ensureInitialized();
-  runApp(
-    const MaterialApp(
-      debugShowCheckedModeBanner: false,
-      home: BookingSystemOverlay(),
-    ),
-  );
-}
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();

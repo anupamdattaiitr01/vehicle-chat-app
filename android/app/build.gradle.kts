@@ -46,6 +46,10 @@ kotlin {
 dependencies {
     // ADDED: Core library desugaring dependency for Android notification channels
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
+
+    // ADDED: Expose FirebaseMessagingService & RemoteMessage to MiloFirebaseMessagingService.kt
+    implementation(platform("com.google.firebase:firebase-bom:33.10.0"))
+    implementation("com.google.firebase:firebase-messaging")
 }
 
 flutter {

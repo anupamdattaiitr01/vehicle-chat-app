@@ -1,4 +1,5 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <!-- Network, Notification, Vibration, Wake Lock, Overlay & Full-Screen Intent permissions -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
@@ -7,12 +8,10 @@
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT"/>
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
 
     <application
-        android:label="vehicle_chat_app"
-        android:name="${applicationName}"
+        android:label="Milo Drive"
+        android:name=".MiloApplication"
         android:icon="@mipmap/ic_launcher"
         android:usesCleartextTraffic="true">
         <activity
@@ -41,14 +40,19 @@
             </intent-filter>
         </activity>
 
-        <!-- SYSTEM_ALERT_WINDOW Overlay Service (Uber/Rapido-style floating offer card) -->
+        <!-- Remove duplicate plugin service so MiloFirebaseMessagingService exclusively handles FCM -->
         <service
-            android:name="flutter.overlay.window.flutter_overlay_window.OverlayService"
+            android:name="io.flutter.plugins.firebase.messaging.FlutterFirebaseMessagingService"
             android:exported="false"
-            android:foregroundServiceType="specialUse">
-            <property
-                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Real-time driver ride dispatch overlay" />
+            tools:node="remove" />
+
+        <!-- Native FirebaseMessagingService for Background & Kill-Mode WindowManager Overlay -->
+        <service
+            android:name=".MiloFirebaseMessagingService"
+            android:exported="false">
+            <intent-filter android:priority="1000">
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
         </service>
 
         <!-- Default high-priority notification channel matching backend firebase.ts -->

@@ -6,6 +6,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../constants/app_constants.dart';
 
 typedef NotificationData = Map<String, dynamic>;
@@ -22,17 +23,32 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 
   if (message.data.isEmpty) return;
 
-  final plugin = FlutterLocalNotificationsPlugin();
-  const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
-  await plugin.initialize(
-    settings: const InitializationSettings(android: androidSettings),
-  );
-
-  final androidPlugin = plugin.resolvePlatformSpecificImplementation<
-      AndroidFlutterLocalNotificationsPlugin>();
-
-  // 1. High-Priority Full-Screen Intent Ride Assignment Alert (wakes app in kill mode)
+  // 1. Ride Assignment Alert: Trigger native WindowManager card in background/kill mode
   if (message.data['type'] == 'BOOKING_ASSIGNED') {
+    if (Platform.isAndroid) {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(
+          'pending_native_booking_json',
+          json.encode(message.data),
+        );
+        // MiloApplication's OnSharedPreferenceChangeListener immediately
+        // inflates MiloOverlayManager's floating card (or falls back to a
+        // notification if SYSTEM_ALERT_WINDOW is disabled).
+        return;
+      } catch (e) {
+        debugPrint('Native overlay bridge error: $e');
+      }
+    }
+
+    // Non-Android or bridge error fallback notification
+    final plugin = FlutterLocalNotificationsPlugin();
+    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+    await plugin.initialize(
+      settings: const InitializationSettings(android: androidSettings),
+    );
+    final androidPlugin = plugin.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
     await androidPlugin?.createNotificationChannel(
       const AndroidNotificationChannel(
         kBookingAlertChannelId,
@@ -84,6 +100,23 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 
   // 2. Standard Data-Only Chat Message Notification
   if (message.notification == null) {
+    final plugin = FlutterLocalNotificationsPlugin();
+    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+    await plugin.initialize(
+      settings: const InitializationSettings(android: androidSettings),
+    );
+    final androidPlugin = plugin.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    await androidPlugin?.createNotificationChannel(
+      const AndroidNotificationChannel(
+        AppConstants.notificationChannelId,
+        AppConstants.notificationChannelName,
+        description: AppConstants.notificationChannelDescription,
+        importance: Importance.max,
+        playSound: true,
+      ),
+    );
+
     await plugin.show(
       id: DateTime.now().millisecondsSinceEpoch.remainder(1000000000),
       title: message.data['title'] ??
@@ -137,8 +170,6 @@ class NotificationService {
     enableVibration: true,
   );
 
-  /// Deterministic 31-bit notification ID per booking so duplicate pushes
-  /// overwrite each other and responses can dismiss the exact tray alert.
   static int bookingNotificationId(String bookingId) {
     return bookingId.hashCode & 0x7fffffff;
   }
@@ -152,8 +183,6 @@ class NotificationService {
       // ignore: deprecated_member_use
   FirebaseMessaging.instance.onTokenRefresh;
 
-  /// Returns and clears the notification payload if the app was cold-launched
-  /// from a Full-Screen Intent or local notification tap.
   NotificationData? consumeInitialLocalNotification() {
     final payload = _initialLocalLaunchPayload;
     _initialLocalLaunchPayload = null;
@@ -200,8 +229,6 @@ class NotificationService {
     await androidPlugin?.createNotificationChannel(_bookingChannel);
   }
 
-  /// Dismisses the ongoing ride alert from the Android notification shade
-  /// once the driver confirms or raises a query.
   Future<void> cancelBookingNotification(String bookingId) async {
     if (bookingId.isEmpty) return;
     try {

@@ -1,63 +1,93 @@
 package com.yourcompany.vehicle_chat_app
 
-import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
-import android.os.Bundle
 import android.provider.Settings
-import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
-    private val channelName = "com.yourcompany.vehicle_chat_app/full_screen_intent"
+    private val overlayChannel = "com.yourcompany.vehicle_chat_app/native_overlay"
 
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-            setShowWhenLocked(true)
-            setTurnScreenOn(true)
-        } else {
-            @Suppress("DEPRECATION")
-            window.addFlags(
-                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
-                        WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
-            )
-        }
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, overlayChannel)
             .setMethodCallHandler { call, result ->
+                val prefs = getSharedPreferences(
+                    MiloOverlayManager.PREFS_NAME,
+                    Context.MODE_PRIVATE
+                )
                 when (call.method) {
-                    "canUseFullScreenIntent" -> {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                            val notificationManager =
-                                getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                            result.success(notificationManager.canUseFullScreenIntent())
+                    "isOverlayPermissionGranted" -> {
+                        val granted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                            Settings.canDrawOverlays(this)
+                        } else {
+                            true
+                        }
+                        result.success(granted)
+                    }
+
+                    "requestOverlayPermission" -> {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+                            !Settings.canDrawOverlays(this)
+                        ) {
+                            try {
+                                val intent = Intent(
+                                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                    Uri.parse("package:$packageName")
+                                )
+                                startActivity(intent)
+                                result.success(true)
+                            } catch (_: Exception) {
+                                val fallback = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
+                                startActivity(fallback)
+                                result.success(true)
+                            }
                         } else {
                             result.success(true)
                         }
                     }
 
-                    "openFullScreenIntentSettings" -> {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                            val intent = Intent(
-                                Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,
-                                Uri.parse("package:$packageName")
-                            ).apply {
-                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    "syncCredentials" -> {
+                        val baseUrl = call.argument<String>("baseUrl")
+                        val token = call.argument<String>("token")
+                        prefs.edit().apply {
+                            if (!baseUrl.isNullOrBlank()) {
+                                putString(MiloOverlayManager.KEY_BASE_URL, baseUrl.trim())
                             }
-                            startActivity(intent)
+                            if (!token.isNullOrBlank()) {
+                                putString(MiloOverlayManager.KEY_AUTH_TOKEN, token.trim())
+                            }
+                            apply()
                         }
                         result.success(true)
+                    }
+
+                    "dismissNativeOverlay" -> {
+                        MiloOverlayManager.dismissOverlay(this)
+                        result.success(true)
+                    }
+
+                    "consumePendingQueryId" -> {
+                        val id = prefs.getString(
+                            MiloOverlayManager.KEY_PENDING_QUERY_ID,
+                            null
+                        )
+                        if (!id.isNullOrEmpty()) {
+                            prefs.edit()
+                                .remove(MiloOverlayManager.KEY_PENDING_QUERY_ID)
+                                .apply()
+                        }
+                        result.success(id)
                     }
 
                     else -> result.notImplemented()

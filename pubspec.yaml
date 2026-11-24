@@ -17,11 +17,11 @@ dependencies:
   encrypt: ^5.0.3
   crypto: ^3.0.8
 
-  # Firebase push notifications, system overlay & encrypted session persistence
+  # Firebase push notifications, native overlay bridge & encrypted session persistence
   firebase_core: any
   firebase_messaging: any
   flutter_local_notifications: any
-  flutter_overlay_window: ^1.0.2
+  shared_preferences: ^2.5.3
   flutter_secure_storage: any
   dio: ^5.11.1
   go_router: ^18.1.4
